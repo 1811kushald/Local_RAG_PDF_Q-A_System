@@ -1,4 +1,4 @@
-# Local RAG PDF Q&A System
+<img width="959" height="509" alt="image" src="https://github.com/user-attachments/assets/70735f45-2fcd-4cc7-b70e-3c804a8d7408" /># Local RAG PDF Q&A System
 
 A simple web application that lets you upload a PDF and ask natural-language questions about it — powered by a locally-hosted Retrieval-Augmented Generation (RAG) pipeline. No paid APIs, no external LLM calls — everything runs on your own machine.
 
@@ -57,7 +57,8 @@ The heavy setup work (loading the PDF, chunking, embedding, indexing) happens on
 
 ## Screenshots
 
-*(Add screenshots of the interface here)*
+<img width="959" height="509" alt="Screenshot 2026-08-30 152406" src="https://github.com/user-attachments/assets/81884991-4a9d-4f10-9696-5cd66a70f6a7" />
+
 
 **Upload Page**
 
