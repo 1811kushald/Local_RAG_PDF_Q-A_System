@@ -1,4 +1,4 @@
-<img width="959" height="509" alt="image" src="https://github.com/user-attachments/assets/70735f45-2fcd-4cc7-b70e-3c804a8d7408" /># Local RAG PDF Q&A System
+# Local RAG PDF Q&A System
 
 A simple web application that lets you upload a PDF and ask natural-language questions about it — powered by a locally-hosted Retrieval-Augmented Generation (RAG) pipeline. No paid APIs, no external LLM calls — everything runs on your own machine.
 
@@ -59,15 +59,6 @@ The heavy setup work (loading the PDF, chunking, embedding, indexing) happens on
 
 <img width="959" height="509" alt="Screenshot 2026-08-30 152406" src="https://github.com/user-attachments/assets/81884991-4a9d-4f10-9696-5cd66a70f6a7" />
 
-
-**Upload Page**
-
-<!-- ![Upload Page](screenshots/upload.png) -->
-
-**Q&A Page**
-
-<!-- ![Q&A Page](screenshots/qa.png) -->
-
 ## Setup & Installation
 
 1. Clone the repository
@@ -127,16 +118,4 @@ ragsite/
 - Faster inference using quantized models (GGUF / llama.cpp)
 - Background indexing with Celery for large PDFs
 - Support for other document formats (Word, TXT)
-
-
-
-## Setup
-1. `pip install -r requirements.txt`
-2. `python manage.py migrate`
-3. `python manage.py runserver`
-
-Note: on first run, the app downloads two Hugging Face models
-(~1GB total: Qwen2.5-0.5B-Instruct + all-MiniLM-L6-v2 embeddings)
-into your local Hugging Face cache. This can take several minutes
-depending on connection speed, but only happens once.
 
