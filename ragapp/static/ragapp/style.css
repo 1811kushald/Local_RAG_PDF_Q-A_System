@@ -1,0 +1,26 @@
+.chat-input-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 75%;
+    z-index: 1000;
+}
+
+@media (max-width: 768px) {
+    .chat-input-container {
+        width: 90%;
+    }
+}
+
+.answer-list {
+    line-height: 1.6;
+    padding-left: 1.2rem;
+}
+.answer-list li {
+    margin-bottom: 0.5rem;
+}
+
+.answer-section {
+    padding-top: 100px;
+}

@@ -1,0 +1,11 @@
+Django
+langchain
+langchain-community
+langchain-huggingface
+langchain-text-splitters
+langchain-classic
+pypdf
+sentence-transformers
+faiss-cpu
+transformers
+accelerate
