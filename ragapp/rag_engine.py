@@ -12,6 +12,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 _embeddings = None
 _llm = None
+_index_cache: dict = {}   # { index_name: FAISS } — avoids disk reload on every question
 
 
 def load_models():
@@ -54,15 +55,28 @@ def build_index_from_pdf(pdf_path, index_name):
 
     index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
     vector_store.save_local(index_dir)
+    _index_cache[index_name] = vector_store   # warm cache — first question hits memory, not disk
+
+
+def invalidate_cache(index_name):
+    """Remove a vector store from the in-memory cache.
+    Call this before deleting a PDF so stale FAISS objects don't linger in memory.
+    Safe to call even when the key is absent (e.g. after a server restart).
+    """
+    _index_cache.pop(index_name, None)
 
 
 def answer_question(index_name, question, k=3):
-    """Run on every question. Fast — just loads a saved index + generates."""
-    index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
-    vector_store = FAISS.load_local(
-        index_dir, _embeddings, allow_dangerous_deserialization=True
-    )
+    """Run on every question. Fast — hits the in-memory cache; only falls back to disk on a cache miss."""
+    if index_name not in _index_cache:
+        # Cache miss: server was restarted or cache was invalidated — reload from disk once.
+        index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
+        _index_cache[index_name] = FAISS.load_local(
+            index_dir, _embeddings, allow_dangerous_deserialization=True
+        )
+    vector_store = _index_cache[index_name]
     retriever = vector_store.as_retriever(search_kwargs={"k": k})
+
 
     prompt = ChatPromptTemplate.from_messages([
     ("system",
@@ -75,6 +89,7 @@ def answer_question(index_name, question, k=3):
      "Context:\n{context}"),
     ("human", "{input}"),
     ])
+    
 
     doc_chain = create_stuff_documents_chain(_llm, prompt)
     qa_chain = create_retrieval_chain(retriever, doc_chain)

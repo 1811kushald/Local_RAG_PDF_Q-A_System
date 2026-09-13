@@ -29,7 +29,7 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="staticBackdropLabel">Modal title</h5>
+                    <h5 class="modal-title" id="staticBackdropLabel">Manage PDF</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <form method="POST" enctype="multipart/form-data">
@@ -39,20 +39,39 @@
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                        <button type="submit" class="btn btn-secondary" name="upload">Upload &amp; Index</button>
+                        <button type="submit" class="btn btn-primary" name="upload">Upload &amp; Index</button>
                     </div>
                 </form>
+
+                {% if doc %}
+                <div class="modal-body border-top pt-3">
+                    <p class="mb-1 text-muted small">Currently loaded:</p>
+                    <p class="mb-2"><strong>{{ doc.original_name }}</strong></p>
+                    <form method="POST">
+                        {% csrf_token %}
+                        <button
+                            type="submit"
+                            name="remove"
+                            class="btn btn-danger btn-sm"
+                            onclick="return confirm('Remove {{ doc.original_name }}? This cannot be undone.');"
+                        >
+                            🗑 Remove PDF
+                        </button>
+                    </form>
+                </div>
+                {% endif %}
+
             </div>
         </div>
     </div>
+
 
 
     <!-- ========================= -->
     <!-- CURRENT PDF -->
     <!-- ========================= -->
 
-    {% if doc %}
-
+    
         <!-- ========================= -->
         <!-- ASK QUESTION -->
         <!-- ========================= -->
@@ -113,32 +132,6 @@
         </div>
         </main>
 
-    {% else %}
-
-        <hr>
-
-        <p>
-            📄 No PDF uploaded.
-            Please upload a PDF to start asking questions.
-        </p>
-
-
-        <h2>Ask a Question</h2>
-
-        <textarea
-            rows="5"
-            cols="60"
-            placeholder="Upload a PDF first..."
-            disabled
-        ></textarea>
-
-        <br><br>
-
-        <button disabled>
-            Ask Question
-        </button>
-
-    {% endif %}
 
     {% if error %}
 

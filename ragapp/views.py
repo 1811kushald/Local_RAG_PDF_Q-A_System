@@ -1,6 +1,8 @@
+import shutil
 from django.shortcuts import render, redirect
 from .models import UploadedPDF
 from . import rag_engine
+
 
 
 def _parse_answer_points(raw_answer):
@@ -80,10 +82,26 @@ def ask_view(request):
     elif request.method == "POST" and "remove" in request.POST:
 
         if doc:
+            index_name = doc.index_name()
+
+            # 1. Evict from in-memory cache before any deletion.
+            rag_engine.invalidate_cache(index_name)
+
+            # 2. Delete the uploaded PDF file from disk.
             doc.file.delete(save=False)
+
+            # 3. Delete the FAISS vectorstore directory from disk.
+            from django.conf import settings
+            import os
+            vectorstore_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
+            if os.path.isdir(vectorstore_dir):
+                shutil.rmtree(vectorstore_dir)
+
+            # 4. Delete the database record.
             doc.delete()
 
         return redirect("ask")
+
 
     return render(request, "ragapp/ask.html", {
         "doc": doc,
