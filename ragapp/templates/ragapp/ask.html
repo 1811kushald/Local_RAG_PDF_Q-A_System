@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="{% static 'ragapp/style.css' %}">
 </head>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
-<body>
+<body data-index-name="{% if doc and doc.index_ready %}{{ doc.index_name }}{% endif %}">
     <nav class="navbar navbar-light fixed-top bg-light">
         <div class="container-fluid">
         <h2><a class="navbar-brand mb-0 h1" href="#">PDF Querry</a></h2>
@@ -115,7 +115,7 @@
         <!-- ========================= -->
         <main class="answer-section">
         <div class="p-5 mb-4 bg-light rounded-3 w-75 mx-auto answer-section">
-            <div class="container-fluid py-5">
+            <div class="container-fluid py-5" id="answer-box">
                 {% if answer_points %}
                     <p><strong>Q:</strong> {{ question }}</p>
                     <ul class="answer-list">
@@ -140,6 +140,88 @@
         </p>
 
     {% endif %}
+
+    <script>
+    (function () {
+        const form      = document.querySelector('.chat-input-container form');
+        const input     = document.querySelector('input[name="question"]');
+        const sendBtn   = document.querySelector('button[name="ask"]');
+        const answerBox = document.getElementById('answer-box');
+        const indexName = document.body.dataset.indexName || "";
+
+        // No PDF loaded — leave the normal form POST behaviour unchanged.
+        if (!form || !indexName) return;
+
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            const question = input.value.trim();
+            if (!question) return;
+
+            // Show the question immediately and prepare a live bullet list.
+            answerBox.innerHTML =
+                '<p><strong>Q:</strong> ' + question + '</p>' +
+                '<ul class="answer-list" id="live-list"></ul>';
+            const list = document.getElementById('live-list');
+
+            // Disable send while streaming.
+            sendBtn.disabled = true;
+
+            // buffer accumulates token fragments between newlines.
+            let buffer = "";
+
+            const url = '/stream-answer/?q=' + encodeURIComponent(question) +
+                        '&index=' + encodeURIComponent(indexName);
+            const es  = new EventSource(url);
+
+            es.onmessage = function (event) {
+                const data = event.data;
+
+                if (data === '[DONE]') {
+                    es.close();
+                    // Flush any remaining buffered text as a final bullet.
+                    if (buffer.trim()) addBullet(list, buffer);
+                    buffer = "";
+                    sendBtn.disabled = false;
+                    return;
+                }
+
+                if (data.startsWith('[ERROR]')) {
+                    es.close();
+                    list.innerHTML =
+                        '<li style="color:red">' + data.slice(7).trim() + '</li>';
+                    sendBtn.disabled = false;
+                    return;
+                }
+
+                // Decode the \\n escape that stream_view applied.
+                const text = data.replace(/\\n/g, '\n');
+                buffer += text;
+
+                // Each complete line (ending with \n) becomes its own bullet.
+                const lines = buffer.split('\n');
+                buffer = lines.pop();           // last entry: still-building fragment
+
+                for (const line of lines) {
+                    if (line.trim()) addBullet(list, line);
+                }
+            };
+
+            es.onerror = function () {
+                es.close();
+                sendBtn.disabled = false;
+            };
+        });
+
+        // Strip leading "- " or "• " and render the text as a list item.
+        function addBullet(list, rawLine) {
+            const text = rawLine.replace(/^[\s\-•]+/, '').trim();
+            if (!text) return;
+            const li = document.createElement('li');
+            li.textContent = text;
+            list.appendChild(li);
+        }
+    })();
+    </script>
 
 </body>
 </html>

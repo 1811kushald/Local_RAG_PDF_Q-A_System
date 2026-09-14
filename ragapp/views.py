@@ -1,5 +1,6 @@
 import shutil
 from django.shortcuts import render, redirect
+from django.http import StreamingHttpResponse
 from .models import UploadedPDF
 from . import rag_engine
 
@@ -109,3 +110,42 @@ def ask_view(request):
         "answer_points": answer_points,
         "error": error,
     })
+
+
+def stream_view(request):
+    """SSE endpoint: streams LLM token-fragments as the model generates them.
+
+    Called via JavaScript EventSource from ask.html.
+    GET parameters:
+      ?q=<question>      — the user's question
+      &index=<name>      — the FAISS index name for the active PDF
+
+    Each SSE event carries one token fragment as plain text.
+    Newlines inside tokens are escaped to \\n so each data: line stays
+    well-formed; the client decodes them back to real newlines.
+    A final 'data: [DONE]' event signals stream completion.
+    """
+    question   = request.GET.get("q", "").strip()
+    index_name = request.GET.get("index", "").strip()
+
+    if not question or not index_name:
+        return StreamingHttpResponse(
+            iter(["data: [ERROR] Missing question or index.\n\n"]),
+            content_type="text/event-stream",
+        )
+
+    def event_stream():
+        try:
+            for token in rag_engine.stream_answer(index_name, question):
+                # Escape real newlines so each SSE data: line is self-contained.
+                safe = token.replace("\n", "\\n")
+                yield f"data: {safe}\n\n"
+        except Exception as exc:
+            yield f"data: [ERROR] {exc}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+    response["Cache-Control"]      = "no-cache"
+    response["X-Accel-Buffering"] = "no"   # prevents Nginx from buffering SSE chunks
+    return response

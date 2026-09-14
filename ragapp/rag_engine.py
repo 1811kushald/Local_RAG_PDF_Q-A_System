@@ -1,5 +1,6 @@
 import os
 from django.conf import settings
+from threading import Thread
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
@@ -8,7 +9,7 @@ from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline, TextIteratorStreamer
 
 # ── generation constants ──────────────────────────────────────────────────────
 _MAX_NEW_TOKENS    = 220   # per-round token cap; continuation loop handles overflow
@@ -110,7 +111,7 @@ def build_index_from_pdf(pdf_path, index_name):
     loader    = PyPDFLoader(pdf_path)
     documents = loader.load()
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=150)
     chunks   = splitter.split_documents(documents)
 
     vector_store = FAISS.from_documents(chunks, _embeddings)
@@ -128,7 +129,7 @@ def invalidate_cache(index_name):
     _index_cache.pop(index_name, None)
 
 
-def answer_question(index_name, question, k=3):
+def answer_question(index_name, question, k=5):
     """Run on every question. Fast — hits the in-memory cache; only falls back to disk on a cache miss.
 
     After the main chain call, a detect-truncation-then-continue loop fires only
@@ -142,11 +143,11 @@ def answer_question(index_name, question, k=3):
         )
     vector_store = _index_cache[index_name]
 
-    # MMR retriever: fetches 10 candidates and returns the k most diverse ones,
+    # MMR retriever: fetches 20 candidates and returns the k most diverse ones,
     # preventing near-duplicate chunks from flooding the context.
     retriever = vector_store.as_retriever(
         search_type="mmr",
-        search_kwargs={"k": k, "fetch_k": 10, "lambda_mult": 0.7},
+        search_kwargs={"k": k, "fetch_k": 20, "lambda_mult": 0.7},
     )
 
     prompt = ChatPromptTemplate.from_messages([
@@ -181,3 +182,104 @@ def answer_question(index_name, question, k=3):
         rounds += 1
 
     return answer
+
+
+def _stream_one_round(input_ids):
+    """Generate one round of tokens, yielding each token-fragment as it arrives.
+
+    A delegating generator: yields tokens upward to stream_answer(), and returns
+    the full collected text via `return collected` (captured by the caller with
+    `result = yield from _stream_one_round(...)`  — standard PEP 380 behaviour).
+
+    model.generate() runs in a daemon Thread so the main thread can pull from
+    the TextIteratorStreamer queue without blocking the Django SSE response.
+    """
+    streamer = TextIteratorStreamer(
+        _tokenizer, skip_prompt=True, skip_special_tokens=True
+    )
+    gen_kwargs = dict(
+        input_ids          = input_ids,
+        max_new_tokens     = _MAX_NEW_TOKENS,
+        do_sample          = True,
+        temperature        = 0.3,
+        repetition_penalty = 1.15,
+        streamer           = streamer,
+    )
+    thread = Thread(
+        target=_llm.pipeline.model.generate,
+        kwargs=gen_kwargs,
+        daemon=True,
+    )
+    thread.start()
+
+    collected = ""
+    for token in streamer:       # blocks until each token is placed in the queue
+        collected += token
+        yield token              # forward token to stream_answer → Django view → browser
+
+    thread.join()
+    return collected             # captured by `collected = yield from _stream_one_round(...)`
+
+
+def stream_answer(index_name: str, question: str, k: int = 5):
+    """Generator that yields raw text token-fragments as the model produces them.
+
+    Designed for Django's StreamingHttpResponse + Server-Sent Events.
+    Shares the same MMR retrieval, prompt wording, and truncation/continuation
+    logic as answer_question() — the only difference is token-by-token output
+    instead of a single blocking return value.
+    """
+    # ── 1. Retrieve context (fast, ~100 ms) ──────────────────────────────────
+    if index_name not in _index_cache:
+        index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
+        _index_cache[index_name] = FAISS.load_local(
+            index_dir, _embeddings, allow_dangerous_deserialization=True
+        )
+    retriever    = _index_cache[index_name].as_retriever(
+        search_type="mmr",
+        search_kwargs={"k": k, "fetch_k": 20, "lambda_mult": 0.7},
+    )
+    context_docs = retriever.invoke(question)
+    context_text = "\n\n".join(d.page_content for d in context_docs)
+
+    # ── 2. Format prompt with Qwen chat template ──────────────────────────────
+    system_msg = (
+        "You are a document assistant. Answer using ONLY the context below. "
+        "Always format your answer as a bullet list using '- ' at the start "
+        "of each line. Maximum 6 bullet points. Each bullet is one concise "
+        "sentence. No paragraphs, no repeating the same point twice. "
+        "Do not add commentary, disclaimers, or phrases like 'let me know'. "
+        "If nothing relevant is found, reply exactly: "
+        "'Not found in the document.'\n\nContext:\n" + context_text
+    )
+    messages  = [
+        {"role": "system", "content": system_msg},
+        {"role": "user",   "content": question},
+    ]
+    input_ids = _tokenizer.apply_chat_template(
+        messages, return_tensors="pt", add_generation_prompt=True
+    ).to(_llm.pipeline.model.device)
+
+    # ── 3. Stream round 1 ─────────────────────────────────────────────────────
+    collected = yield from _stream_one_round(input_ids)
+
+    # ── 4. Continuation rounds — streamed live, only if truncated ─────────────
+    rounds = 0
+    while _looks_truncated(collected) and rounds < _MAX_CONTINUATIONS:
+        cont_messages = [
+            {"role": "system", "content": _CONTINUATION_SYSTEM},
+            {"role": "user", "content": (
+                f"Context:\n{context_text}\n\n"
+                f"Question: {question}\n\n"
+                f"Partial answer already given (do not repeat any of this):\n{collected}\n\n"
+                "Continue ONLY the remaining bullet points:"
+            )},
+        ]
+        cont_ids = _tokenizer.apply_chat_template(
+            cont_messages, return_tensors="pt", add_generation_prompt=True
+        ).to(_llm.pipeline.model.device)
+        continuation = yield from _stream_one_round(cont_ids)
+        if not continuation.strip():
+            break
+        collected = collected.rstrip() + "\n" + continuation
+        rounds   += 1
