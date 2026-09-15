@@ -5,7 +5,22 @@ A high-performance web application that lets you upload a PDF and ask natural-la
 Features real-time token streaming via Server-Sent Events (SSE), instant boot times, and a lightweight memory footprint (~300 MB RAM) suitable for free-tier cloud deployment on platforms like Render.
 
 ---
+---
+## 🖼️ User Interface
+<img width="956" height="501" alt="image" src="https://github.com/user-attachments/assets/16133f6e-36ac-488a-b0e1-3bd705972929" />
 
+---
+---
+## Features
+
+- **Browser-Based PDF Upload**: Upload documents through a Bootstrap modal with active state management.
+- **Smart Upload Protection**: Automatically disables upload controls when a document is currently active and provides a single-click **🗑 Remove PDF** button.
+- **Local Embedding & Vector Search**: Document chunking and vector similarity search run locally using FAISS and MiniLM embeddings.
+- **Maximal Marginal Relevance (MMR)**: Context retrieval selects diverse, non-redundant passages (`k=5`, `fetch_k=20`, `lambda_mult=0.7`) to prevent repetitive context.
+- **Blazing-Fast Groq Inference**: Generates answers in seconds using Groq's high-speed LPU infrastructure (`qwen/qwen3.8-27b`).
+- **Real-Time Token Streaming**: Server-Sent Events (SSE) stream answers token-by-token directly into live bullet points.
+- **Lightweight & Cloud-Ready**: Low RAM usage (~300 MB) enables free-tier deployment on cloud platforms like **Render**.
+---
 ## Architecture Diagram
 
 ```mermaid
@@ -53,18 +68,6 @@ flowchart TD
     Views -->|"13. SSE EventStream (data: ...)"| SSEClient
     SSEClient -->|"14. Real-time Live Render"| UI
 ```
-
----
-
-## Features
-
-- **Browser-Based PDF Upload**: Upload documents through a Bootstrap modal with active state management.
-- **Smart Upload Protection**: Automatically disables upload controls when a document is currently active and provides a single-click **🗑 Remove PDF** button.
-- **Local Embedding & Vector Search**: Document chunking and vector similarity search run locally using FAISS and MiniLM embeddings.
-- **Maximal Marginal Relevance (MMR)**: Context retrieval selects diverse, non-redundant passages (`k=5`, `fetch_k=20`, `lambda_mult=0.7`) to prevent repetitive context.
-- **Blazing-Fast Groq Inference**: Generates answers in seconds using Groq's high-speed LPU infrastructure (`qwen/qwen3.8-27b`).
-- **Real-Time Token Streaming**: Server-Sent Events (SSE) stream answers token-by-token directly into live bullet points.
-- **Lightweight & Cloud-Ready**: Low RAM usage (~300 MB) enables free-tier deployment on cloud platforms like **Render**.
 
 ---
 
