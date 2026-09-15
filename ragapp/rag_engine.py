@@ -58,6 +58,12 @@ def load_models():
     if _embeddings is not None:
         return
 
+    try:
+        import torch
+        torch.set_num_threads(1)
+    except Exception:
+        pass
+
     print("Loading embedding model (sentence-transformers/all-MiniLM-L6-v2)...")
     _embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
