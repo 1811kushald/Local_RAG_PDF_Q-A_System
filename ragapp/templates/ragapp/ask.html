@@ -32,34 +32,37 @@
                     <h5 class="modal-title" id="staticBackdropLabel">Manage PDF</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <form method="POST" enctype="multipart/form-data">
+                <form id="upload-form" method="POST" enctype="multipart/form-data">
                     {% csrf_token %}
                     <div class="modal-body">
-                            <input type="file" name="file" accept=".pdf" required>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                        <button type="submit" class="btn btn-primary" name="upload">Upload &amp; Index</button>
+                        <input type="file" name="file" accept=".pdf" required {% if doc %}disabled{% endif %}>
                     </div>
                 </form>
 
                 {% if doc %}
-                <div class="modal-body border-top pt-3">
-                    <p class="mb-1 text-muted small">Currently loaded:</p>
-                    <p class="mb-2"><strong>{{ doc.original_name }}</strong></p>
-                    <form method="POST">
-                        {% csrf_token %}
+                <form id="remove-form" method="POST">
+                    {% csrf_token %}
+                </form>
+                {% endif %}
+
+                <div class="modal-footer">
+                    {% if doc %}
                         <button
                             type="submit"
+                            form="remove-form"
                             name="remove"
-                            class="btn btn-danger btn-sm"
+                            class="btn btn-danger"
                             onclick="return confirm('Remove {{ doc.original_name }}? This cannot be undone.');"
                         >
                             🗑 Remove PDF
                         </button>
-                    </form>
+                    {% else %}
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    {% endif %}
+                    <button type="submit" form="upload-form" class="btn btn-primary" name="upload" {% if doc %}disabled{% endif %}>
+                        Upload &amp; Index
+                    </button>
                 </div>
-                {% endif %}
 
             </div>
         </div>
