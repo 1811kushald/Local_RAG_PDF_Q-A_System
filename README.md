@@ -213,7 +213,7 @@ This application is ready for deployment on **Render** (free tier):
 3. Configure settings:
    - **Environment**: `Python 3`
    - **Build Command**: `./build.sh`
-   - **Start Command**: `gunicorn ragsite.wsgi:application`
+   - **Start Command**: `gunicorn ragsite.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120`
 4. Add Environment Variables in the Render dashboard:
    - `GROQ_API_KEY`: Your Groq API key
    - `GROQ_MODEL`: `qwen/qwen3.8-27b`
