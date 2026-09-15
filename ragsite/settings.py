@@ -30,9 +30,15 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b")
 SECRET_KEY = "django-insecure-p-h@pra4g3siwhn2prrvsi9peuskep0*uy#(_y4pz$@zaq1l!o"
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DEBUG", "True").lower() == "true"
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",") if os.environ.get("ALLOWED_HOSTS") else ["*"]
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://*.onrender.com",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
 
 
 # Application definition
@@ -49,6 +55,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -123,6 +130,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"

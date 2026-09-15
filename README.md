@@ -9,28 +9,41 @@ Features real-time token streaming via Server-Sent Events (SSE), instant boot ti
 ## Architecture Diagram
 
 ```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'primaryColor': '#ffffff',
+    'primaryTextColor': '#0f172a',
+    'primaryBorderColor': '#94a3b8',
+    'lineColor': '#475569',
+    'textColor': '#0f172a',
+    'fontSize': '13px',
+    'edgeLabelBackground':'#ffffff',
+    'tertiaryColor': '#f8fafc'
+  }
+}}%%
 flowchart TD
-    subgraph Client ["Frontend (Browser)"]
+    subgraph Client ["🖥️ Frontend (Browser)"]
         UI["User Interface (ask.html)"]
         UploadModal["Upload Modal"]
         ChatInput["Chat Input Form"]
         SSEClient["EventSource (SSE Listener)"]
     end
 
-    subgraph DjangoApp ["Django Backend (ragapp)"]
+    subgraph DjangoApp ["⚙️ Django Backend (ragapp)"]
         Views["views.py (ask_view & stream_view)"]
-        DB[(SQLite - UploadedPDF)]
+        DB[("SQLite (UploadedPDF)")]
         MediaDir[("media/ Storage")]
     end
 
-    subgraph RAGCore ["RAG Pipeline (rag_engine.py)"]
+    subgraph RAGCore ["🧠 RAG Pipeline (rag_engine.py)"]
         PDFLoader["PyPDFLoader & TextSplitter"]
         Embedder["Sentence-Transformers (all-MiniLM-L6-v2)"]
         FAISSIndex[("FAISS Vector Index (Disk & Memory Cache)")]
         MMR["MMR Retriever (k=5, fetch_k=20)"]
     end
 
-    subgraph GroqCloud ["Groq Cloud Inference"]
+    subgraph GroqCloud ["⚡ Groq Cloud Inference"]
         GroqLLM["Groq LPU (qwen/qwen3.8-27b)"]
     end
 
@@ -52,6 +65,19 @@ flowchart TD
     GroqLLM -->|"12. Streamed Token Chunks"| Views
     Views -->|"13. SSE EventStream (data: ...)"| SSEClient
     SSEClient -->|"14. Real-time Live Render"| UI
+
+    %% Style Subgraphs (Light Theme Palette)
+    style Client fill:#F0F9FF,stroke:#0284C7,stroke-width:1.5px,color:#0369A1
+    style DjangoApp fill:#F0FDF4,stroke:#16A34A,stroke-width:1.5px,color:#15803D
+    style RAGCore fill:#FFFBEB,stroke:#D97706,stroke-width:1.5px,color:#B45309
+    style GroqCloud fill:#FAF5FF,stroke:#9333EA,stroke-width:1.5px,color:#6B21A8
+
+    %% Style Nodes (White Cards with Dark Text)
+    classDef lightNode fill:#FFFFFF,stroke:#64748B,stroke-width:1.5px,color:#0F172A;
+    classDef lightDb fill:#FFFFFF,stroke:#475569,stroke-width:1.5px,color:#0F172A;
+
+    class UI,UploadModal,ChatInput,SSEClient,Views,PDFLoader,Embedder,MMR,GroqLLM lightNode;
+    class DB,MediaDir,FAISSIndex lightDb;
 ```
 
 ---
@@ -183,7 +209,7 @@ This application is ready for deployment on **Render** (free tier):
 2. In Render, create a new **Web Service** connected to your repository.
 3. Configure settings:
    - **Environment**: `Python 3`
-   - **Build Command**: `pip install -r requirements.txt && python manage.py migrate`
+   - **Build Command**: `./build.sh`
    - **Start Command**: `gunicorn ragsite.wsgi:application`
 4. Add Environment Variables in the Render dashboard:
    - `GROQ_API_KEY`: Your Groq API key

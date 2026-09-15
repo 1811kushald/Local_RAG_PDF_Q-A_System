@@ -10,3 +10,5 @@ faiss-cpu
 transformers
 groq
 python-dotenv
+gunicorn
+whitenoise

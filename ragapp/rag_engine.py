@@ -40,6 +40,14 @@ def _get_groq_client():
     return _groq_client
 
 
+def _get_embeddings():
+    """Retrieve or lazily initialize the embedding model."""
+    global _embeddings
+    if _embeddings is None:
+        load_models()
+    return _embeddings
+
+
 def load_models():
     """Called once when the Django server starts (see apps.py).
 
@@ -65,9 +73,10 @@ def build_index_from_pdf(pdf_path, index_name):
     splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=150)
     chunks = splitter.split_documents(documents)
 
-    vector_store = FAISS.from_documents(chunks, _embeddings)
+    vector_store = FAISS.from_documents(chunks, _get_embeddings())
 
     index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
+    os.makedirs(index_dir, exist_ok=True)
     vector_store.save_local(index_dir)
     _index_cache[index_name] = vector_store
 
@@ -82,7 +91,7 @@ def answer_question(index_name, question, k=5):
     if index_name not in _index_cache:
         index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
         _index_cache[index_name] = FAISS.load_local(
-            index_dir, _embeddings, allow_dangerous_deserialization=True
+            index_dir, _get_embeddings(), allow_dangerous_deserialization=True
         )
     vector_store = _index_cache[index_name]
 
@@ -116,7 +125,7 @@ def stream_answer(index_name: str, question: str, k: int = 5):
     if index_name not in _index_cache:
         index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
         _index_cache[index_name] = FAISS.load_local(
-            index_dir, _embeddings, allow_dangerous_deserialization=True
+            index_dir, _get_embeddings(), allow_dangerous_deserialization=True
         )
     vector_store = _index_cache[index_name]
 

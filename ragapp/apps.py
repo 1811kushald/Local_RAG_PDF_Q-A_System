@@ -1,4 +1,5 @@
 import os
+import sys
 from django.apps import AppConfig
 
 
@@ -7,12 +8,12 @@ class RagappConfig(AppConfig):
     name = "ragapp"
 
     def ready(self):
-        # Avoid double-loading under the dev server's autoreloader,
-        # and avoid loading during `manage.py migrate` / `makemigrations`.
-        import sys
-        if "runserver" not in sys.argv:
+        # Skip model loading during administrative commands
+        if any(cmd in sys.argv for cmd in ["migrate", "makemigrations", "collectstatic", "check"]):
             return
-        if os.environ.get("RUN_MAIN") != "true":
+
+        # Under development runserver, only load in the main child process
+        if "runserver" in sys.argv and os.environ.get("RUN_MAIN") != "true":
             return
 
         from . import rag_engine
