@@ -213,7 +213,8 @@
         });
 
         // Strip leading "- " or "• " and render the text as a list item.
-        function addBullet(list, rawLine) {
+        function addBullet(list, rawLine) 
+        {
             const text = rawLine.replace(/^[\s\-•]+/, '').trim();
             if (!text) return;
             const li = document.createElement('li');
