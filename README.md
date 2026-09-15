@@ -5,11 +5,11 @@ A high-performance web application that lets you upload a PDF and ask natural-la
 Features real-time token streaming via Server-Sent Events (SSE), instant boot times, and a lightweight memory footprint (~300 MB RAM) suitable for free-tier cloud deployment on platforms like Render.
 
 ---
----
+
 ## 🖼️ User Interface
 <img width="956" height="501" alt="image" src="https://github.com/user-attachments/assets/16133f6e-36ac-488a-b0e1-3bd705972929" />
 
----
+
 ---
 ## Features
 
