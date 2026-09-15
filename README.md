@@ -23,7 +23,7 @@ Upload any PDF through the web interface, and the app will read it, break it int
 | Text chunking | LangChain text splitters |
 | Embeddings | Sentence-Transformers (`all-MiniLM-L6-v2`) |
 | Vector search | FAISS |
-| Language model | Local Hugging Face model (`Qwen2.5-0.5B-Instruct`) |
+| Language model | Groq API (`llama-3.3-70b-versatile`) |
 | Orchestration | LangChain |
 
 ## How It Works

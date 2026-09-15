@@ -1,285 +1,147 @@
 import os
 from django.conf import settings
-from threading import Thread
+from groq import Groq
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
-from langchain_classic.chains import create_retrieval_chain
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline, TextIteratorStreamer
+from langchain_huggingface import HuggingFaceEmbeddings
 
-# ── generation constants ──────────────────────────────────────────────────────
-_MAX_NEW_TOKENS    = 220   # per-round token cap; continuation loop handles overflow
-_MAX_CONTINUATIONS = 2     # maximum extra rounds after the first answer
+# ── Groq Model Configuration ──────────────────────────────────────────────────
+def _get_model():
+    return getattr(settings, "GROQ_MODEL", "") or os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b")
 
-# ── singletons ────────────────────────────────────────────────────────────────
-_embeddings  = None
-_llm         = None
-_tokenizer   = None        # stored at startup; used by _looks_truncated() and _continue_answer()
-_index_cache: dict = {}    # { index_name: FAISS } — avoids disk reload on every question
+_SYSTEM_PROMPT = (
+    "You are a document assistant. Answer using ONLY the context below. "
+    "Always format your answer as a bullet list using '- ' at the start "
+    "of each line. Maximum 6 bullet points. Each bullet is one concise "
+    "sentence. No paragraphs, no repeating the same point twice. "
+    "Do not add commentary, disclaimers, or phrases like 'let me know'. "
+    "If nothing relevant is found, reply exactly: "
+    "'Not found in the document.'"
+)
+
+# ── Singletons ────────────────────────────────────────────────────────────────
+_embeddings = None
+_groq_client = None
+_index_cache: dict = {}    # { index_name: FAISS }
+
+
+def _get_groq_client():
+    """Retrieve or initialize the Groq client instance."""
+    global _groq_client
+    if _groq_client is None:
+        api_key = getattr(settings, "GROQ_API_KEY", "") or os.environ.get("GROQ_API_KEY", "")
+        if not api_key:
+            raise ValueError(
+                "GROQ_API_KEY is not configured. Please set your key in the .env file or environment."
+            )
+        _groq_client = Groq(api_key=api_key)
+    return _groq_client
 
 
 def load_models():
-    """Called once when the Django server starts. See apps.py."""
-    global _embeddings, _llm, _tokenizer
+    """Called once when the Django server starts (see apps.py).
+
+    Loads only the lightweight embedding model into memory (~200MB RAM).
+    Text generation is handled externally via Groq API.
+    """
+    global _embeddings
     if _embeddings is not None:
         return
 
-    print("Loading embedding model...")
+    print("Loading embedding model (sentence-transformers/all-MiniLM-L6-v2)...")
     _embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
-
-    print("Loading local LLM...")
-    model_id  = "Qwen/Qwen2.5-0.5B-Instruct"
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model     = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto")
-    _tokenizer = tokenizer   # expose globally so helpers can re-tokenise for truncation detection
-
-    pipe = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=_MAX_NEW_TOKENS,   # single source of truth
-        do_sample=True,
-        temperature=0.3,                  # lower = more factual, less rambling in RAG
-        repetition_penalty=1.15,          # discourages repeated phrases / duplicate bullets
-        return_full_text=False,
-    )
-    _llm = HuggingFacePipeline(pipeline=pipe)
-    print("Models ready.")
-
-
-def _looks_truncated(text: str, cap: int = _MAX_NEW_TOKENS, margin: int = 5) -> bool:
-    """Return True if *text* appears to have been cut off at the token cap.
-
-    Two independent signals are checked — either is enough to return True:
-      (a) Re-tokenising the output gives a count within *margin* of *cap*:
-          strong sign the pipeline stopped because it ran out of budget.
-      (b) The last non-whitespace character is not terminal punctuation:
-          sign the model was mid-thought when generation halted.
-    """
-    if not text or not text.strip():
-        return False
-    tokens     = _tokenizer.encode(text, add_special_tokens=False)
-    near_cap   = len(tokens) >= cap - margin
-    last_char  = text.rstrip()[-1]
-    open_ended = last_char not in {'.', '!', '?', ':', '"', "'"}
-    return near_cap or open_ended
-
-
-# System instruction used exclusively for continuation calls.
-_CONTINUATION_SYSTEM = (
-    "You are a document assistant. Use ONLY the provided context. "
-    "Continue the partial bullet list below in the same '- ' format. "
-    "One point per line. Do NOT repeat any bullet already written. "
-    "Stop when the answer is complete. No commentary or disclaimers."
-)
-
-
-def _continue_answer(question: str, context_text: str, partial_answer: str) -> str:
-    """Ask the LLM to continue a truncated bullet-list answer.
-
-    Bypasses the retrieval chain (context is already known). Uses
-    apply_chat_template so Qwen's <|im_start|> chat tokens are correctly
-    inserted before the string is passed to _llm.invoke().
-
-    Returns the continuation text stripped of leading/trailing whitespace,
-    or an empty string if the model produced nothing useful.
-    """
-    messages = [
-        {"role": "system", "content": _CONTINUATION_SYSTEM},
-        {"role": "user", "content": (
-            f"Context:\n{context_text}\n\n"
-            f"Question: {question}\n\n"
-            f"Partial answer already given (do not repeat any of this):\n{partial_answer}\n\n"
-            "Continue ONLY the remaining bullet points:"
-        )},
-    ]
-    formatted = _tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    result = _llm.invoke(formatted)
-    return result.strip() if isinstance(result, str) else ""
+    print("Embedding model ready. Text generation powered by Groq API.")
 
 
 def build_index_from_pdf(pdf_path, index_name):
-    """Run once per uploaded PDF. Slow (~seconds). Saves index to disk."""
-    loader    = PyPDFLoader(pdf_path)
+    """Run once per uploaded PDF. Saves index to disk and warms in-memory cache."""
+    loader = PyPDFLoader(pdf_path)
     documents = loader.load()
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=150)
-    chunks   = splitter.split_documents(documents)
+    chunks = splitter.split_documents(documents)
 
     vector_store = FAISS.from_documents(chunks, _embeddings)
 
     index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
     vector_store.save_local(index_dir)
-    _index_cache[index_name] = vector_store   # warm cache — first question hits memory, not disk
+    _index_cache[index_name] = vector_store
 
 
 def invalidate_cache(index_name):
-    """Remove a vector store from the in-memory cache.
-    Call this before deleting a PDF so stale FAISS objects don't linger in memory.
-    Safe to call even when the key is absent (e.g. after a server restart).
-    """
+    """Remove a vector store from the in-memory cache."""
     _index_cache.pop(index_name, None)
 
 
 def answer_question(index_name, question, k=5):
-    """Run on every question. Fast — hits the in-memory cache; only falls back to disk on a cache miss.
-
-    After the main chain call, a detect-truncation-then-continue loop fires only
-    when the answer looks cut off — short answers pay zero extra cost.
-    """
+    """Non-streaming query: retrieves context via MMR and calls Groq API."""
     if index_name not in _index_cache:
-        # Cache miss: server was restarted or cache was invalidated — reload from disk once.
         index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
         _index_cache[index_name] = FAISS.load_local(
             index_dir, _embeddings, allow_dangerous_deserialization=True
         )
     vector_store = _index_cache[index_name]
 
-    # MMR retriever: fetches 20 candidates and returns the k most diverse ones,
-    # preventing near-duplicate chunks from flooding the context.
     retriever = vector_store.as_retriever(
-        search_type="mmr",
-        search_kwargs={"k": k, "fetch_k": 20, "lambda_mult": 0.7},
-    )
-
-    prompt = ChatPromptTemplate.from_messages([
-        ("system",
-         "You are a document assistant. Answer using ONLY the context below. "
-         "Always format your answer as a bullet list using '- ' at the start "
-         "of each line. Maximum 6 bullet points. Each bullet is one concise "
-         "sentence. No paragraphs, no repeating the same point twice. "
-         "Do not add commentary, disclaimers, or phrases like 'let me know'. "
-         "If nothing relevant is found, reply exactly: "
-         "'Not found in the document.'\n\n"
-         "Context:\n{context}"),
-        ("human", "{input}"),
-    ])
-
-    doc_chain = create_stuff_documents_chain(_llm, prompt)
-    qa_chain  = create_retrieval_chain(retriever, doc_chain)
-
-    response     = qa_chain.invoke({"input": question})
-    answer       = response["answer"]
-    context_text = "\n\n".join(d.page_content for d in response["context"])
-
-    # ── detect-truncation-then-continue loop ─────────────────────────────────
-    # Fast path: _looks_truncated() returns False → loop never entered, zero overhead.
-    # Slow path: fires only for answers that genuinely hit the token cap.
-    rounds = 0
-    while _looks_truncated(answer) and rounds < _MAX_CONTINUATIONS:
-        continuation = _continue_answer(question, context_text, answer)
-        if not continuation:
-            break
-        answer  = answer.rstrip() + "\n" + continuation
-        rounds += 1
-
-    return answer
-
-
-def _stream_one_round(input_ids):
-    """Generate one round of tokens, yielding each token-fragment as it arrives.
-
-    A delegating generator: yields tokens upward to stream_answer(), and returns
-    the full collected text via `return collected` (captured by the caller with
-    `result = yield from _stream_one_round(...)`  — standard PEP 380 behaviour).
-
-    model.generate() runs in a daemon Thread so the main thread can pull from
-    the TextIteratorStreamer queue without blocking the Django SSE response.
-    """
-    streamer = TextIteratorStreamer(
-        _tokenizer, skip_prompt=True, skip_special_tokens=True
-    )
-    gen_kwargs = dict(
-        input_ids          = input_ids,
-        max_new_tokens     = _MAX_NEW_TOKENS,
-        do_sample          = True,
-        temperature        = 0.3,
-        repetition_penalty = 1.15,
-        streamer           = streamer,
-    )
-    thread = Thread(
-        target=_llm.pipeline.model.generate,
-        kwargs=gen_kwargs,
-        daemon=True,
-    )
-    thread.start()
-
-    collected = ""
-    for token in streamer:       # blocks until each token is placed in the queue
-        collected += token
-        yield token              # forward token to stream_answer → Django view → browser
-
-    thread.join()
-    return collected             # captured by `collected = yield from _stream_one_round(...)`
-
-
-def stream_answer(index_name: str, question: str, k: int = 5):
-    """Generator that yields raw text token-fragments as the model produces them.
-
-    Designed for Django's StreamingHttpResponse + Server-Sent Events.
-    Shares the same MMR retrieval, prompt wording, and truncation/continuation
-    logic as answer_question() — the only difference is token-by-token output
-    instead of a single blocking return value.
-    """
-    # ── 1. Retrieve context (fast, ~100 ms) ──────────────────────────────────
-    if index_name not in _index_cache:
-        index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
-        _index_cache[index_name] = FAISS.load_local(
-            index_dir, _embeddings, allow_dangerous_deserialization=True
-        )
-    retriever    = _index_cache[index_name].as_retriever(
         search_type="mmr",
         search_kwargs={"k": k, "fetch_k": 20, "lambda_mult": 0.7},
     )
     context_docs = retriever.invoke(question)
     context_text = "\n\n".join(d.page_content for d in context_docs)
 
-    # ── 2. Format prompt with Qwen chat template ──────────────────────────────
-    system_msg = (
-        "You are a document assistant. Answer using ONLY the context below. "
-        "Always format your answer as a bullet list using '- ' at the start "
-        "of each line. Maximum 6 bullet points. Each bullet is one concise "
-        "sentence. No paragraphs, no repeating the same point twice. "
-        "Do not add commentary, disclaimers, or phrases like 'let me know'. "
-        "If nothing relevant is found, reply exactly: "
-        "'Not found in the document.'\n\nContext:\n" + context_text
+    client = _get_groq_client()
+    completion = client.chat.completions.create(
+        model=_get_model(),
+        messages=[
+            {
+                "role": "system",
+                "content": f"{_SYSTEM_PROMPT}\n\nContext:\n{context_text}",
+            },
+            {"role": "user", "content": question},
+        ],
+        temperature=0.2,
     )
-    messages  = [
-        {"role": "system", "content": system_msg},
-        {"role": "user",   "content": question},
-    ]
-    input_ids = _tokenizer.apply_chat_template(
-        messages, return_tensors="pt", add_generation_prompt=True
-    ).to(_llm.pipeline.model.device)
+    return completion.choices[0].message.content or ""
 
-    # ── 3. Stream round 1 ─────────────────────────────────────────────────────
-    collected = yield from _stream_one_round(input_ids)
 
-    # ── 4. Continuation rounds — streamed live, only if truncated ─────────────
-    rounds = 0
-    while _looks_truncated(collected) and rounds < _MAX_CONTINUATIONS:
-        cont_messages = [
-            {"role": "system", "content": _CONTINUATION_SYSTEM},
-            {"role": "user", "content": (
-                f"Context:\n{context_text}\n\n"
-                f"Question: {question}\n\n"
-                f"Partial answer already given (do not repeat any of this):\n{collected}\n\n"
-                "Continue ONLY the remaining bullet points:"
-            )},
-        ]
-        cont_ids = _tokenizer.apply_chat_template(
-            cont_messages, return_tensors="pt", add_generation_prompt=True
-        ).to(_llm.pipeline.model.device)
-        continuation = yield from _stream_one_round(cont_ids)
-        if not continuation.strip():
-            break
-        collected = collected.rstrip() + "\n" + continuation
-        rounds   += 1
+def stream_answer(index_name: str, question: str, k: int = 5):
+    """Generator that yields raw text token-fragments streamed live from Groq API.
+
+    Compatible with Django's StreamingHttpResponse + Server-Sent Events.
+    """
+    if index_name not in _index_cache:
+        index_dir = os.path.join(settings.MEDIA_ROOT, "vectorstores", index_name)
+        _index_cache[index_name] = FAISS.load_local(
+            index_dir, _embeddings, allow_dangerous_deserialization=True
+        )
+    vector_store = _index_cache[index_name]
+
+    retriever = vector_store.as_retriever(
+        search_type="mmr",
+        search_kwargs={"k": k, "fetch_k": 20, "lambda_mult": 0.7},
+    )
+    context_docs = retriever.invoke(question)
+    context_text = "\n\n".join(d.page_content for d in context_docs)
+
+    client = _get_groq_client()
+    stream = client.chat.completions.create(
+        model=_get_model(),
+        messages=[
+            {
+                "role": "system",
+                "content": f"{_SYSTEM_PROMPT}\n\nContext:\n{context_text}",
+            },
+            {"role": "user", "content": question},
+        ],
+        temperature=0.2,
+        stream=True,
+    )
+
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta

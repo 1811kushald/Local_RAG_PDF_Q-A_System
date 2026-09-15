@@ -8,4 +8,5 @@ pypdf
 sentence-transformers
 faiss-cpu
 transformers
-accelerate
+groq
+python-dotenv
